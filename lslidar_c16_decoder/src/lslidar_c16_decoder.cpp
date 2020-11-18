@@ -18,6 +18,9 @@
 #include <lslidar_c16_decoder/lslidar_c16_decoder.h>
 #include <std_msgs/Int8.h>
 
+#include <sensor_msgs/PointField.h>
+#include <sensor_msgs/point_cloud2_iterator.h>
+
 using namespace std;
 
 namespace lslidar_c16_decoder {
@@ -130,8 +133,81 @@ bool LslidarC16Decoder::checkPacketValidity(const RawPacket* packet) {
     return true;
 }
 
+void LslidarC16Decoder::publishPointCloud()
+{
+    sensor_msgs::PointCloud2 pc_msg;
 
-void LslidarC16Decoder::publishPointCloud() {
+    pc_msg.header.frame_id = frame_id;
+    pc_msg.header.stamp = ros::Time::now();
+    pc_msg.height = 1;
+    pc_msg.width = 0;
+    pc_msg.is_bigendian = false;
+    pc_msg.is_dense = false;
+
+    for (size_t i = 0; i < 16; ++i)
+    {
+        const lslidar_c16_msgs::LslidarC16Scan& scan = sweep_data->scans[i];
+        //TODO: original removes first and last point
+        pc_msg.width += scan.points.size();
+    }
+
+    sensor_msgs::PointCloud2Modifier modifier(pc_msg);
+    modifier.setPointCloud2Fields(6, 
+        "x", 1, sensor_msgs::PointField::FLOAT32, 
+        "y", 1, sensor_msgs::PointField::FLOAT32, 
+        "z", 1, sensor_msgs::PointField::FLOAT32, 
+        "intensity", 1, sensor_msgs::PointField::FLOAT32,
+        "t", 1, sensor_msgs::PointField::FLOAT32,
+        "ring", 1, sensor_msgs::PointField::INT8
+        );
+    modifier.resize(pc_msg.width);
+
+    //iterators
+    sensor_msgs::PointCloud2Iterator<float> out_x(pc_msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> out_y(pc_msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> out_z(pc_msg, "z");
+    sensor_msgs::PointCloud2Iterator<float> out_i(pc_msg, "intensity");
+    sensor_msgs::PointCloud2Iterator<float> out_t(pc_msg, "t");
+    sensor_msgs::PointCloud2Iterator<uint8_t> out_r(pc_msg, "ring");
+
+    for (size_t i = 0; i < 16; ++i)
+    {
+        const lslidar_c16_msgs::LslidarC16Scan& scan = sweep_data->scans[i];
+        if (scan.points.size() == 0) continue;
+
+        //TODO: original removes first and last point
+        for (size_t j = 0; j < scan.points.size(); j++)
+        {
+            //TODO: may not work anymore
+            if ((scan.points[j].azimuth > angle3_disable_min) and (scan.points[j].azimuth < angle3_disable_max))
+            {
+                continue;
+            }
+
+            //store xyz in point cloud, transforming from image coordinates, (Z Forward to X Forward)
+            *out_x = scan.points[j].x;
+            *out_y = scan.points[j].y;
+            *out_z = scan.points[j].z;
+
+            // store colors
+            *out_i = scan.points[j].intensity;
+            *out_t = scan.points[j].time;
+            *out_r = i;
+
+            //increment
+            ++out_x;
+            ++out_y;
+            ++out_z;
+            ++out_i;
+            ++out_t;
+            ++out_r;
+        }
+    }
+    
+    point_cloud_pub.publish(pc_msg);
+}
+
+/*void LslidarC16Decoder::publishPointCloud() {
 //    VPointCloud::Ptr point_cloud(new VPointCloud());
     pcl::PointCloud<pcl::PointXYZI>::Ptr point_cloud(new pcl::PointCloud<pcl::PointXYZI>);
             // pcl_conversions::toPCL(sweep_data->header).stamp;
@@ -174,7 +250,7 @@ void LslidarC16Decoder::publishPointCloud() {
     point_cloud_pub.publish(pc_msg);
 
     return;
-}
+}*/
 
 // void LslidarC16Decoder::publishPointCloud() {
 //     pcl::PointCloud<pcl::PointXYZIT>::Ptr point_cloud(
